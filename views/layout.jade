@@ -1,0 +1,52 @@
+doctype html
+html
+  head
+    title= title
+    link(rel='stylesheet', href='/stylesheets/style.css')
+    style.
+      .protected {
+        background-color: #cfccfc;
+        padding: 2px;
+        margin: 3px
+      }
+      ul {
+      list-style-type: none;
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      background-color: #cff;
+      }
+      li {
+      float: left;
+      }
+      li a {
+      display: block;
+      color: #666;
+      text-align: center;
+      padding: 4px 6px;
+      text-decoration: none;
+      }
+      li a:hover {
+      background-color: #ccc;
+      }
+    block styles
+  body
+    h3 OIDC playground
+    block footer
+      div.protected(style="background-color:yellow")
+          h4 Home
+          ul
+            li
+              a(href="/") Public Home 
+      div.protected(style="background-color:#fffccf")
+          h4 Links under Google OIDC Protection
+          ul
+            li
+              a(href="/oidc-google/") Home 
+            li
+              a(href="/oidc-google/user") User Info 
+            li
+              a(href='/oidc-google/logout') Log Out of Google OIDC Area 
+    block content
+
+  block scripts
