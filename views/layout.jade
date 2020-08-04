@@ -33,20 +33,25 @@ html
   body
     h3 OIDC playground
     block footer
-      div.protected(style="background-color:yellow")
+      div.protected(style="background-color:#acdcdc")
           h4 Home
           ul
             li
               a(href="/") Public Home 
-      div.protected(style="background-color:#fffccf")
-          h4 Links under Google OIDC Protection
+      - var navItem = {name:"Google",baseUrl:"/oidc-google",color:"#cfccff"}
+      div.protected(style="background-color:#{navItem.color}")
+          h4 Links under #{navItem.name} OIDC Protection
           ul
             li
-              a(href="/oidc-google/") Home 
+              a(href="#{navItem.baseUrl}/") Home |
             li
-              a(href="/oidc-google/user") User Info 
+              a(href="#{navItem.baseUrl}/token") Get token |
             li
-              a(href='/oidc-google/logout') Log Out of Google OIDC Area 
+              a(href="#{navItem.baseUrl}/user") User Info |
+            li
+              a(href="#{navItem.baseUrl}/info") Provider Info|
+            li
+              a(href='#{navItem.baseUrl}/logout') Log Out 
     block content
 
   block scripts

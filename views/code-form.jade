@@ -1,0 +1,12 @@
+extends layout
+
+block content
+  h1 Exchange Code for Token
+  form(method='POST', action="#{token_endpoint}")
+    h5 Access code:
+    textarea(cols='80', rows='5', name='code')
+    h5 Redirect Url where code was received:
+    input(style='width:400px' name='redirect_url', value='', type='text')    
+    br
+    br
+    input(type='submit', value='Get Token', .='')

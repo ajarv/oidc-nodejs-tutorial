@@ -1,41 +1,57 @@
 var express = require('express');
-var router = express.Router();
-const jwt = require('jsonwebtoken');
-
 const { Issuer, generators } = require('openid-client');
-
-const CONFIG = {
-  provider : "Google oidc IdP",
-  client: {
-    client_id: "XXXXXXXXXXXXXXXXXXXX",
-    client_secret: "YYYYYYYYYYYYYYYYYYYY",
-    redirect_uris: ['http://localhost:3000/oidc-google/cb'],
-    response_types: ['code'],
-    // id_token_signed_response_alg (default "RS256")
-    // token_endpoint_auth_method (default "client_secret_basic")
-  },
-  discoverUrl: 'https://accounts.google.com',
-  tokenCookie : "oidc-google",
-  baseUrl: '/oidc-google'
+const secret_config = require('../secret_config');
+/**
+ *  Validation funciton 
+ */
+const validateConfig = (routerConfig) => {
+  if (!(routerConfig.client && routerConfig.discoverUrl && routerConfig.providerName && routerConfig.baseUrl)) {
+    throw new Error("Invalid config - required valid client,discoveryUrl,baseUrl,providerName ")
+  }
+  routerConfig.name = routerConfig.providerName.replace(' ', '')
+  routerConfig.authSessionKey = routerConfig.name + "-auth-session-key"
+  return routerConfig
 }
 
 var client = null
-Issuer.discover(CONFIG.discoverUrl) // => Promise
-  .then(function (Issuer) {
-    // console.log('Discovered issuer %s %O', googleIssuer.issuer, googleIssuer.metadata);
-    client = new Issuer.Client(CONFIG.client);
+var issuer = null
+var routerConfig = validateConfig(secret_config.google)
+
+// see file ../secret_config.js
+var router = express.Router();
+var authSessionKey = routerConfig.authSessionKey
+
+Issuer.discover(routerConfig.discoverUrl) // => Promise
+  .then((Issuer) => {
+    console.log('Discovered issuer %s User Info endpoint %O', Issuer.issuer, Issuer.metadata.userinfo_endpoint);
+    issuer = Issuer
+    if ((issuer.metadata.revocation_endpoint === undefined) && (issuer.metadata.end_session_endpoint !== undefined)) {
+      issuer.metadata.revocation_endpoint = issuer.metadata.end_session_endpoint
+    }
+    client = new Issuer.Client(routerConfig.client);
+  })
+  .catch((err) => {
+    console.error(`Failed to init issuer ${routerConfig.providerName}`, err)
   });
 
 
-const check_auth = (req, res) => {
-  if (!req.cookies[CONFIG.tokenCookie]) {
+/**
+ *  Verifies if the session is authenticated
+ */
+const getAuthTokens = (req, res) => {
+  if (req.session[authSessionKey] === undefined) {
     // We haven't logged in
-    res.redirect(`${CONFIG.baseUrl}/login`);
-    return false;
+    console.info("Session not found  redirecting to login link")
+    res.redirect(`${routerConfig.baseUrl}/login`);
+    return null;
   }
-  return true;
+  return JSON.parse(req.session[authSessionKey]);
 }
 
+/**
+ *  Initiates OAuth2 web Login flow.
+ * 
+ */
 router.get('/login', function (req, res, next) {
 
   const code_verifier = generators.codeVerifier();
@@ -49,52 +65,109 @@ router.get('/login', function (req, res, next) {
     code_challenge,
     code_challenge_method: 'S256',
   });
-  res.render('oidc-login', { title: `Express with ${CONFIG.provider}`, login_link: login_link });
+  res.render('oidc-login', { title: `Express with ${routerConfig.providerName}`, login_link: login_link });
 });
+
+/**
+ *  Initiates OAuth2 web Login callback.
+ *  # Important - This must be configured on the auth provider  settings where you set/get client_id,client_secret
+ * 
+ */
 
 router.get('/cb', function (req, res, next) {
   const params = client.callbackParams(req);
   const code_verifier = req.cookies.code_verifier
-  client.callback(CONFIG.client.redirect_uris[0], params, { code_verifier }) // => Promise
-  .then(function (tokenSet) {
-    // console.log('received and validated tokens %j', tokenSet);
-    // console.log('validated ID Token claims %j', tokenSet.claims());
-    res.cookie(CONFIG.tokenCookie, JSON.stringify(tokenSet));
-    res.redirect(`${CONFIG.baseUrl}/`)
-  })
-  .catch((e)=>{
-    res.render('info-page', {title: `Auth CB Error with ${CONFIG.provider}`, info: { error : `${e}` } });
+  client.callback(routerConfig.client.redirect_uris[0], params, { code_verifier }) // => Promise
+    .then(function (tokenSet) {
+      // console.log('received and validated tokens %j', tokenSet);
+      // console.log('validated ID Token claims %j', tokenSet.claims());
+      req.session[authSessionKey] = JSON.stringify(tokenSet);
+      res.redirect(`${routerConfig.baseUrl}/`)
+    })
+    .catch((e) => {
+      res.render('info-page', { title: `Auth CB Error with ${routerConfig.providerName}`, info: { error: `${e}` } });
+    });
+})
+
+/**
+ * configuration endpoint
+ */
+router.get('/info', function (req, res, next) {
+  res.render('info-page', {
+    title: `Express Info with ${routerConfig.providerName}`,
+    // info: { movie: "Sattae pe Satta", query: req.query } });
+    info: { "issuerMetadata": issuer.metadata }
   });
 })
-router.get('/info', function (req, res, next) {
-  res.render('info-page', { title: `Express Info with ${CONFIG.provider}`, info: { movie: "Sattae pe Satta", query: req.query } });
-})
 
+/**
+ * Base protecteted page
+ */
 router.get('/', function (req, res, next) {
-  if (!check_auth(req, res)) return
-  var tokenSet = JSON.parse(req.cookies[CONFIG.tokenCookie])
-  res.render('info-page', { title: `Tokens with ${CONFIG.provider}`, info: { tokens: tokenSet} });
+  var tokenSet = getAuthTokens(req, res);
+  if (tokenSet == null) { return }
+  res.render('info-page', { title: `Tokes with ${routerConfig.providerName}`, info: { tokens: tokenSet } });
 });
 
+// User Info endpoint
 router.get('/user', function (req, res) {
-  if (!check_auth(req, res)) return
-  console.log('Cookies %j',req.cookies)
-  var tokenSet = JSON.parse(req.cookies[CONFIG.tokenCookie])
+  var tokenSet = getAuthTokens(req, res);
+  if (tokenSet == null) { return }
   var access_token = tokenSet.access_token
   client.userinfo(access_token) // => Promise
-  .then(function (userinfo) {
-    // console.log('userinfo %j', userinfo);
-    res.render('info-page', { title: `Userinfo with ${CONFIG.provider}`, info: { tokens: tokenSet,userinfo: userinfo} });
-  })
-  .catch((e)=>{
-    res.render('info-page', { title: 'Error', info: { error : `${e}` } });
-  });
+    .then(function (userinfo) {
+      // console.log('userinfo %j', userinfo);
+      res.render('info-page', { title: `Userinfo with ${routerConfig.providerName}`, info: { tokens: tokenSet, userinfo: userinfo } });
+    })
+    .catch((e) => {
+      res.render('info-page', { title: 'Error', info: { error: `${e}` } });
+    });
 
 });
 
+// Logout endpoint
 router.get('/logout', function (req, res) {
-  res.clearCookie(CONFIG.tokenCookie);
+  var tokenSet = getAuthTokens(req, res);
+  if (tokenSet != null) {
+    var access_token = tokenSet.access_token
+    client.revoke(access_token)
+      .then(() => {
+        console.log(`Token revoked ${routerConfig.providerName}`)
+        req.session.destroy(function(err) {
+          if (err) {
+            console.error("Failed to destroy session",err)
+          }
+        })
+      })
+      .catch((e) => {
+        console.log(`Token revocation failed for ${routerConfig.providerName}`, e)
+        res.error(500)
+        return
+      });
+  }
   res.redirect('/logged-off');
+});
+
+router.get('/token', function (req, res, next) {
+  res.render('code-form', { token_endpoint: `${routerConfig.baseUrl}/token` });
+});
+
+router.post('/token', function (req, res, next) {
+  client.grant({
+    grant_type: 'authorization_code',
+    code: req.body.code,
+    redirect_uri: req.body.redirect_url
+  })
+    .then(function (tokenSet) {
+      // console.log('received and validated tokens %j', tokenSet);
+      // console.log('validated ID Token claims %j', tokenSet.claims());
+      req.session[routerConfig.authSessionKey] = JSON.stringify(tokenSet);
+      res.redirect(`${routerConfig.baseUrl}/`)
+    })
+    .catch((e) => {
+      res.render('info-page', { title: `Auth Token Error with ${routerConfig.providerName}`, info: { error: `${e}` } });
+    });
+
 });
 
 
